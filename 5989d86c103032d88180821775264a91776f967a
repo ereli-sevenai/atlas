@@ -1,0 +1,43 @@
+sql/athena/inspect.go
+  4170c2233f9cd753 280,295-355,359,364,367,369-371,373,376-380,382,386-388,390-432,437,441,445,447,449-460,462-463,481,494-528
+sql/athena/inspect_test.go
+  4170c2233f9cd753 1-208
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "5989d86c103032d88180821775264a91776f967a",
+  "prompts": {
+    "4170c2233f9cd753": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "333a1b77-a2b7-497f-9815-ddbe76b0fd0f",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ereli",
+      "messages": [],
+      "total_additions": 405,
+      "total_deletions": 43,
+      "accepted_lines": 405,
+      "overriden_lines": 0
+    },
+    "c8afdc27ee31a266": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "f96cef89-b83b-4f3d-b786-e4fd1c404f44",
+        "model": "claude-opus-4-5"
+      },
+      "human_author": "Ereli",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 0,
+      "overriden_lines": 1
+    }
+  },
+  "humans": {
+    "h_7508a08151f08f": {
+      "author": "Ereli"
+    }
+  }
+}
