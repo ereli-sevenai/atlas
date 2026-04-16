@@ -277,17 +277,14 @@ func (i *inspect) tableProperties(ctx context.Context, t *schema.Table) error {
 	stmt := createStmt.String()
 	t.AddAttrs(&CreateStmt{S: stmt})
 
-	// Parse LOCATION
-	if loc := extractProperty(stmt, "LOCATION"); loc != "" {
+	if loc := extractLocation(stmt); loc != "" {
 		t.AddAttrs(&Location{Path: loc})
 	}
 
-	// Parse STORED AS / ROW FORMAT
 	if format := extractStoredAs(stmt); format != "" {
 		t.AddAttrs(&StoredAs{Format: format})
 	}
 
-	// Parse TBLPROPERTIES
 	if props := extractTableProperties(stmt); len(props) > 0 {
 		t.AddAttrs(&TableProperties{Properties: props})
 	}
@@ -295,74 +292,181 @@ func (i *inspect) tableProperties(ctx context.Context, t *schema.Table) error {
 	return nil
 }
 
-// extractProperty extracts a property value from a CREATE TABLE statement.
-func extractProperty(stmt, prop string) string {
-	upper := strings.ToUpper(stmt)
-	idx := strings.Index(upper, prop)
+// findTopLevelKeyword searches stmt (case-insensitive) for `keyword` as a whole
+// word at the top level of the statement – that is, outside of parenthesized
+// groups (e.g. column lists, struct<...> types, TBLPROPERTIES bodies) and
+// outside of single-quoted string literals. Returns the byte index in stmt or
+// -1 if not found.
+func findTopLevelKeyword(stmt, keyword string) int {
+	ku := strings.ToUpper(keyword)
+	depth := 0
+	inStr := false
+	for i := 0; i < len(stmt); i++ {
+		c := stmt[i]
+		if inStr {
+			if c == '\'' {
+				// Handle Hive's '' escape sequence.
+				if i+1 < len(stmt) && stmt[i+1] == '\'' {
+					i++
+					continue
+				}
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '\'':
+			inStr = true
+			continue
+		case '(':
+			depth++
+			continue
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+			continue
+		}
+		if depth != 0 {
+			continue
+		}
+		if i+len(ku) > len(stmt) {
+			continue
+		}
+		if !strings.EqualFold(stmt[i:i+len(ku)], ku) {
+			continue
+		}
+		leftOK := i == 0 || isWordBoundary(stmt[i-1])
+		rightOK := i+len(ku) == len(stmt) || isWordBoundary(stmt[i+len(ku)])
+		if leftOK && rightOK {
+			return i
+		}
+	}
+	return -1
+}
+
+func isWordBoundary(b byte) bool {
+	return !((b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') || b == '_')
+}
+
+// extractLocation returns the LOCATION value from a CREATE TABLE statement,
+// or the empty string if not found.
+func extractLocation(stmt string) string {
+	idx := findTopLevelKeyword(stmt, "LOCATION")
 	if idx == -1 {
 		return ""
 	}
-	rest := stmt[idx+len(prop):]
-	rest = strings.TrimSpace(rest)
+	rest := strings.TrimSpace(stmt[idx+len("LOCATION"):])
 	if len(rest) == 0 {
 		return ""
 	}
-	// Extract quoted value
 	if rest[0] == '\'' {
-		end := strings.Index(rest[1:], "'")
-		if end != -1 {
+		if end := strings.Index(rest[1:], "'"); end != -1 {
 			return rest[1 : end+1]
 		}
+		return ""
 	}
-	// Extract until whitespace or newline
-	end := strings.IndexAny(rest, " \t\n\r")
-	if end == -1 {
-		return rest
+	// Unquoted: take until whitespace.
+	if end := strings.IndexAny(rest, " \t\n\r"); end != -1 {
+		return rest[:end]
 	}
-	return rest[:end]
+	return rest
 }
 
-// extractStoredAs extracts the storage format from a CREATE TABLE statement.
+// extractStoredAs returns the STORED AS format from a CREATE TABLE statement.
+// Handles both the simple form (e.g. "STORED AS PARQUET") and the more verbose
+// form "STORED AS INPUTFORMAT '<class>' OUTPUTFORMAT '<class>'", in which case
+// it infers a human-friendly format name from well-known INPUTFORMAT classes,
+// falling back to the INPUTFORMAT class name itself.
 func extractStoredAs(stmt string) string {
-	upper := strings.ToUpper(stmt)
-	idx := strings.Index(upper, "STORED AS")
+	idx := findTopLevelKeyword(stmt, "STORED AS")
 	if idx == -1 {
 		return ""
 	}
-	rest := stmt[idx+len("STORED AS"):]
-	rest = strings.TrimSpace(rest)
-	// Get the format (e.g., PARQUET, ORC, TEXTFILE)
-	end := strings.IndexAny(rest, " \t\n\r(")
-	if end == -1 {
-		return strings.TrimSpace(rest)
+	rest := strings.TrimSpace(stmt[idx+len("STORED AS"):])
+	if rest == "" {
+		return ""
 	}
-	return strings.TrimSpace(rest[:end])
+	// Detect the INPUTFORMAT / OUTPUTFORMAT form.
+	if strings.HasPrefix(strings.ToUpper(rest), "INPUTFORMAT") {
+		after := strings.TrimSpace(rest[len("INPUTFORMAT"):])
+		if len(after) == 0 || after[0] != '\'' {
+			return "INPUTFORMAT"
+		}
+		end := strings.Index(after[1:], "'")
+		if end == -1 {
+			return "INPUTFORMAT"
+		}
+		inputClass := after[1 : end+1]
+		if f := inferFormat(inputClass); f != "" {
+			return f
+		}
+		return inputClass
+	}
+	// Simple form: read the next word.
+	if end := strings.IndexAny(rest, " \t\n\r("); end != -1 {
+		return strings.TrimSpace(rest[:end])
+	}
+	return rest
+}
+
+// inferFormat maps well-known Hadoop/Hive INPUTFORMAT classes to simple
+// Athena/Hive format keywords. Returns "" for unknown classes.
+func inferFormat(inputFormat string) string {
+	switch inputFormat {
+	case "org.apache.hadoop.mapred.TextInputFormat":
+		return "TEXTFILE"
+	case "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat":
+		return "PARQUET"
+	case "org.apache.hadoop.hive.ql.io.orc.OrcInputFormat":
+		return "ORC"
+	case "org.apache.hadoop.hive.ql.io.avro.AvroContainerInputFormat":
+		return "AVRO"
+	case "org.apache.hadoop.mapred.SequenceFileInputFormat":
+		return "SEQUENCEFILE"
+	case "org.apache.hadoop.hive.ql.io.RCFileInputFormat":
+		return "RCFILE"
+	case "org.apache.iceberg.mr.hive.HiveIcebergInputFormat":
+		return "ICEBERG"
+	}
+	return ""
 }
 
 // extractTableProperties extracts TBLPROPERTIES from a CREATE TABLE statement.
 func extractTableProperties(stmt string) map[string]string {
-	upper := strings.ToUpper(stmt)
-	idx := strings.Index(upper, "TBLPROPERTIES")
+	idx := findTopLevelKeyword(stmt, "TBLPROPERTIES")
 	if idx == -1 {
 		return nil
 	}
-	rest := stmt[idx+len("TBLPROPERTIES"):]
-	rest = strings.TrimSpace(rest)
+	rest := strings.TrimSpace(stmt[idx+len("TBLPROPERTIES"):])
 	if len(rest) == 0 || rest[0] != '(' {
 		return nil
 	}
-	// Find matching closing paren
+	// Find matching closing paren, honoring string literals.
 	depth := 0
+	inStr := false
 	end := -1
-	for i, c := range rest {
+	for i := 0; i < len(rest); i++ {
+		c := rest[i]
+		if inStr {
+			if c == '\'' {
+				if i+1 < len(rest) && rest[i+1] == '\'' {
+					i++
+					continue
+				}
+				inStr = false
+			}
+			continue
+		}
 		switch c {
+		case '\'':
+			inStr = true
 		case '(':
 			depth++
 		case ')':
 			depth--
 			if depth == 0 {
 				end = i
-				break
 			}
 		}
 		if end != -1 {
@@ -374,8 +478,7 @@ func extractTableProperties(stmt string) map[string]string {
 	}
 	propsStr := rest[1:end]
 	props := make(map[string]string)
-	// Parse key='value' pairs
-	for _, pair := range strings.Split(propsStr, ",") {
+	for _, pair := range splitTopLevelCommas(propsStr) {
 		pair = strings.TrimSpace(pair)
 		parts := strings.SplitN(pair, "=", 2)
 		if len(parts) != 2 {
@@ -386,6 +489,43 @@ func extractTableProperties(stmt string) map[string]string {
 		props[key] = value
 	}
 	return props
+}
+
+// splitTopLevelCommas splits s on commas that are not inside a single-quoted
+// string literal.
+func splitTopLevelCommas(s string) []string {
+	var out []string
+	var b strings.Builder
+	inStr := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inStr {
+			b.WriteByte(c)
+			if c == '\'' {
+				if i+1 < len(s) && s[i+1] == '\'' {
+					b.WriteByte(s[i+1])
+					i++
+					continue
+				}
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '\'':
+			inStr = true
+			b.WriteByte(c)
+		case ',':
+			out = append(out, b.String())
+			b.Reset()
+		default:
+			b.WriteByte(c)
+		}
+	}
+	if b.Len() > 0 {
+		out = append(out, b.String())
+	}
+	return out
 }
 
 // Athena-specific table attributes
