@@ -37,7 +37,8 @@ It offers two workflows:
 [Databricks](https://atlasgo.io/guides/databricks) ·
 [Spanner](https://atlasgo.io/guides/spanner) ·
 [Aurora DSQL](https://atlasgo.io/guides/dsql) ·
-[Azure Fabric](https://atlasgo.io/guides/azure-fabric)
+[Azure Fabric](https://atlasgo.io/guides/azure-fabric) ·
+[AWS Athena](https://atlasgo.io/guides/aws-athena)
 
 ## Installation
 

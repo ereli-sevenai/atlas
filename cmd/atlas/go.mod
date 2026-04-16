@@ -25,6 +25,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.11.1
 	github.com/tursodatabase/libsql-client-go v0.0.0-20240902231107-85af5b9d094d
+	github.com/uber/athenadriver v1.1.15
 	github.com/vektah/gqlparser/v2 v2.5.16
 	github.com/zclconf/go-cty v1.14.4
 	gocloud.dev v0.43.0
