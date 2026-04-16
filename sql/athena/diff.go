@@ -6,10 +6,18 @@ package athena
 
 import (
 	"reflect"
+	"strings"
 
 	"ariga.io/atlas/sql/internal/sqlx"
 	"ariga.io/atlas/sql/schema"
 )
+
+// normLocation returns a canonical form of an S3 LOCATION path by trimming a
+// trailing slash. Athena's metastore drops trailing slashes on persistence,
+// so this makes HCL-authored and inspected paths comparable.
+func normLocation(p string) string {
+	return strings.TrimRight(p, "/")
+}
 
 // DefaultDiff provides basic diffing capabilities for Athena dialects.
 // Note, it is recommended to call Open, create a new Driver and use its
@@ -42,13 +50,17 @@ func (*diff) SchemaObjectDiff(_, _ *schema.Schema, _ *schema.DiffOptions) ([]sch
 func (d *diff) TableAttrDiff(from, to *schema.Table, opts *schema.DiffOptions) ([]schema.Change, error) {
 	var changes []schema.Change
 
-	// Check for Location changes
+	// Check for Location changes. Athena strips trailing slashes when it
+	// persists a table's LOCATION, so an HCL-authored `s3://bucket/path/`
+	// comes back as `s3://bucket/path` via DESCRIBE/SHOW CREATE TABLE.
+	// Normalize before comparing so `apply` is idempotent.
 	var fromLoc, toLoc Location
 	if sqlx.Has(from.Attrs, &fromLoc) != sqlx.Has(to.Attrs, &toLoc) {
 		if sqlx.Has(to.Attrs, &toLoc) {
 			changes = append(changes, &schema.AddAttr{A: &toLoc})
 		}
-	} else if sqlx.Has(from.Attrs, &fromLoc) && sqlx.Has(to.Attrs, &toLoc) && fromLoc.Path != toLoc.Path {
+	} else if sqlx.Has(from.Attrs, &fromLoc) && sqlx.Has(to.Attrs, &toLoc) &&
+		normLocation(fromLoc.Path) != normLocation(toLoc.Path) {
 		changes = append(changes, &schema.ModifyAttr{From: &fromLoc, To: &toLoc})
 	}
 
@@ -104,12 +116,60 @@ func (d *diff) ColumnChange(_ *schema.Table, from, to *schema.Column, _ *schema.
 }
 
 // typeChanged reports if the column type was changed.
+//
+// We compare by the structural Go type only (and, for named types, by their
+// identifying string) and intentionally do NOT compare Type.Raw: inspected
+// Raw strings come from Athena (lowercase, possibly containing hive-specific
+// punctuation such as `array<string>`) while HCL-loaded Raw strings come
+// from the codec and may differ cosmetically even when the types are
+// equivalent. Emitting a ModifyColumn for a Raw-only delta would produce a
+// change Athena cannot apply (Hive tables do not support ALTER COLUMN TYPE)
+// and break `schema apply` idempotency.
 func (d *diff) typeChanged(from, to *schema.Column) (bool, error) {
 	fromT, toT := from.Type.Type, to.Type.Type
 	if fromT == nil || toT == nil {
 		return fromT != toT, nil
 	}
-	return reflect.TypeOf(fromT) != reflect.TypeOf(toT) || from.Type.Raw != to.Type.Raw, nil
+	if reflect.TypeOf(fromT) != reflect.TypeOf(toT) {
+		return true, nil
+	}
+	return !sameType(fromT, toT), nil
+}
+
+// sameType reports whether two Athena column types are semantically
+// equivalent. It inspects the well-known typed fields (T / Size / Precision
+// / Scale / Unsigned, where applicable) instead of relying on the Raw string.
+func sameType(a, b schema.Type) bool {
+	switch av := a.(type) {
+	case *schema.StringType:
+		bv := b.(*schema.StringType)
+		return av.T == bv.T && av.Size == bv.Size
+	case *schema.IntegerType:
+		bv := b.(*schema.IntegerType)
+		return av.T == bv.T && av.Unsigned == bv.Unsigned
+	case *schema.FloatType:
+		bv := b.(*schema.FloatType)
+		return av.T == bv.T && av.Precision == bv.Precision
+	case *schema.DecimalType:
+		bv := b.(*schema.DecimalType)
+		return av.T == bv.T && av.Precision == bv.Precision && av.Scale == bv.Scale
+	case *schema.BoolType:
+		bv := b.(*schema.BoolType)
+		return av.T == bv.T
+	case *schema.BinaryType:
+		bv := b.(*schema.BinaryType)
+		return av.T == bv.T
+	case *schema.TimeType:
+		bv := b.(*schema.TimeType)
+		return av.T == bv.T
+	case *schema.UnsupportedType:
+		bv := b.(*schema.UnsupportedType)
+		return av.T == bv.T
+	}
+	// For any other Go type (including Athena-specific complex types) fall
+	// back to reflect.DeepEqual. This is stricter than comparing Raw strings
+	// but still avoids the Raw-only false positive.
+	return reflect.DeepEqual(a, b)
 }
 
 // commentChanged reports if the column comment was changed.

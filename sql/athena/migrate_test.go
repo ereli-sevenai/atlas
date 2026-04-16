@@ -107,8 +107,48 @@ func TestPlanChanges_AddPartitionedTable(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, plan.Changes, 1)
-	require.Contains(t, plan.Changes[0].Cmd, "PARTITIONED BY")
-	require.Contains(t, plan.Changes[0].Cmd, "`dt`")
+	cmd := plan.Changes[0].Cmd
+	require.Contains(t, cmd, "PARTITIONED BY")
+	require.Contains(t, cmd, "`dt`")
+	// Regression: partition columns used to be skipped inside MapIndent,
+	// leaving a dangling comma before the closing paren (e.g.
+	// "`message` string,\n) PARTITIONED BY ..."). Ensure the column list
+	// is terminated cleanly.
+	require.NotRegexp(t, `,\s*\)\s*PARTITIONED BY`, cmd)
+	require.NotContains(t, cmd, "`dt` string COMMENT") // dt must not be in the regular column list
+}
+
+// TestPlanChanges_AddPartitionedTable_NoTrailingComma is a focused regression
+// test for a bug where MapIndent emitted a separator comma for a skipped
+// callback, producing invalid DDL when the last column(s) were partition
+// columns.
+func TestPlanChanges_AddPartitionedTable_NoTrailingComma(t *testing.T) {
+	p := &planApply{conn: &conn{}}
+
+	// Two regular columns followed by a partition column (worst case – the
+	// skipped iteration is the last one, so the trailing comma is visible).
+	table := &schema.Table{
+		Name: "events",
+		Columns: []*schema.Column{
+			{Name: "id", Type: &schema.ColumnType{Type: &schema.StringType{T: "string"}}},
+			{Name: "amount", Type: &schema.ColumnType{Type: &schema.FloatType{T: "double"}}},
+			{Name: "dt", Type: &schema.ColumnType{Type: &schema.StringType{T: "string"}}},
+		},
+		Attrs: []schema.Attr{
+			&ExternalTable{},
+			&Location{Path: "s3://my-bucket/events/"},
+			&StoredAs{Format: "PARQUET"},
+			&PartitionColumns{Columns: []string{"dt"}},
+		},
+	}
+	plan, err := p.PlanChanges(context.Background(), "test", []schema.Change{
+		&schema.AddTable{T: table},
+	})
+	require.NoError(t, err)
+	require.Len(t, plan.Changes, 1)
+	cmd := plan.Changes[0].Cmd
+	// No trailing comma inside the column list.
+	require.NotRegexp(t, `,\s*\)`, cmd)
 }
 
 func TestPlanChanges_DropTable(t *testing.T) {

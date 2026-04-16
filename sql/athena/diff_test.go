@@ -69,6 +69,48 @@ func TestDiff_TableAttrDiff(t *testing.T) {
 	changes2, err := d.TableAttrDiff(from2, to2, &schema.DiffOptions{})
 	require.NoError(t, err)
 	require.Empty(t, changes2)
+
+	// Trailing slash normalization: Athena stores LOCATION without a
+	// trailing slash, so HCL-authored `s3://bucket/path/` must diff as
+	// equivalent to the inspected `s3://bucket/path`.
+	from3 := &schema.Table{
+		Name:  "test",
+		Attrs: []schema.Attr{&Location{Path: "s3://bucket/path"}},
+	}
+	to3 := &schema.Table{
+		Name:  "test",
+		Attrs: []schema.Attr{&Location{Path: "s3://bucket/path/"}},
+	}
+	changes3, err := d.TableAttrDiff(from3, to3, &schema.DiffOptions{})
+	require.NoError(t, err)
+	require.Empty(t, changes3, "trailing slash should not produce a diff")
+}
+
+func TestDiff_ColumnChange_RawOnlyNoDiff(t *testing.T) {
+	d := &diff{}
+	// Inspect sets Raw to Athena's lowercase reply ("string") while HCL
+	// may leave it empty. Structurally equivalent types must NOT produce a
+	// ModifyColumn – otherwise round-trip (apply → inspect → apply) would
+	// loop forever on Athena, which cannot ALTER COLUMN TYPE.
+	from := &schema.Column{
+		Name: "col",
+		Type: &schema.ColumnType{
+			Raw:  "string",
+			Type: &schema.StringType{T: "string"},
+			Null: true,
+		},
+	}
+	to := &schema.Column{
+		Name: "col",
+		Type: &schema.ColumnType{
+			Raw:  "",
+			Type: &schema.StringType{T: "string"},
+			Null: true,
+		},
+	}
+	change, err := d.ColumnChange(nil, from, to, &schema.DiffOptions{})
+	require.NoError(t, err)
+	require.Nil(t, change, "expected no-change when only Raw differs")
 }
 
 func TestDiff_ColumnChange(t *testing.T) {

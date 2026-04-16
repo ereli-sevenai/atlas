@@ -132,14 +132,18 @@ func (s *state) addTable(add *schema.AddTable) error {
 	}
 	b.Table(add.T)
 
-	// Columns
+	// Columns (partition columns are defined separately in PARTITIONED BY,
+	// so filter them out before calling MapIndent — a skipped iteration
+	// still emits a separator comma and would produce invalid DDL).
+	nonPartCols := make([]*schema.Column, 0, len(add.T.Columns))
+	for _, c := range add.T.Columns {
+		if !isPartitionColumn(add.T, c.Name) {
+			nonPartCols = append(nonPartCols, c)
+		}
+	}
 	b.Wrap(func(b *sqlx.Builder) {
-		b.MapIndent(add.T.Columns, func(i int, b *sqlx.Builder) {
-			c := add.T.Columns[i]
-			// Skip partition columns - they're defined separately
-			if isPartitionColumn(add.T, c.Name) {
-				return
-			}
+		b.MapIndent(nonPartCols, func(i int, b *sqlx.Builder) {
+			c := nonPartCols[i]
 			t, err := FormatType(c.Type.Type)
 			if err != nil {
 				errs = append(errs, err.Error())
@@ -156,17 +160,22 @@ func (s *state) addTable(add *schema.AddTable) error {
 		return fmt.Errorf("athena: create table %q: %s", add.T.Name, strings.Join(errs, ", "))
 	}
 
-	// Partition columns
+	// Partition columns. Emit COMMENT for each partition column so that
+	// `schema apply` round-trips (inspect→apply) are idempotent – Athena
+	// stores partition column comments and returns them via DESCRIBE, so
+	// skipping COMMENT here produced a spurious ChangeComment on re-apply.
 	if pc := (&PartitionColumns{}); sqlx.Has(add.T.Attrs, pc) && len(pc.Columns) > 0 {
 		b.P("PARTITIONED BY").Wrap(func(b *sqlx.Builder) {
 			for i, colName := range pc.Columns {
 				if i > 0 {
 					b.Comma()
 				}
-				// Find the column to get its type
 				if c, ok := add.T.Column(colName); ok {
 					t, _ := FormatType(c.Type.Type)
 					b.Ident(colName).P(t)
+					if cmt := (&schema.Comment{}); sqlx.Has(c.Attrs, cmt) && cmt.Text != "" {
+						b.P("COMMENT", fmt.Sprintf("'%s'", strings.ReplaceAll(cmt.Text, "'", "''")))
+					}
 				} else {
 					b.Ident(colName).P("string")
 				}
