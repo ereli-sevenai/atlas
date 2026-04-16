@@ -59,7 +59,7 @@ type state struct {
 }
 
 // plan generates migration plan for the given schema changes.
-func (s *state) plan(ctx context.Context, changes []schema.Change) (err error) {
+func (s *state) plan(_ context.Context, changes []schema.Change) (err error) {
 	for _, c := range changes {
 		switch c := c.(type) {
 		case *schema.AddSchema:

@@ -164,12 +164,12 @@ func TestParseURL_Errors(t *testing.T) {
 
 func TestRegionFromHost(t *testing.T) {
 	tests := map[string]string{
-		"athena.us-east-1.amazonaws.com":    "us-east-1",
-		"athena.eu-central-1.amazonaws.com": "eu-central-1",
+		"athena.us-east-1.amazonaws.com":      "us-east-1",
+		"athena.eu-central-1.amazonaws.com":   "eu-central-1",
 		"athena.ap-southeast-2.amazonaws.com": "ap-southeast-2",
-		"athena.cn-north-1.amazonaws.com.cn": "cn-north-1",
-		"example.com":                       "",
-		"athena.amazonaws.com":              "",
+		"athena.cn-north-1.amazonaws.com.cn":  "cn-north-1",
+		"example.com":                         "",
+		"athena.amazonaws.com":                "",
 	}
 	for host, want := range tests {
 		t.Run(host, func(t *testing.T) {
