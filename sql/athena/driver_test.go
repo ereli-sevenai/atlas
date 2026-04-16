@@ -77,7 +77,10 @@ func TestParseURL_AuthModes(t *testing.T) {
 			name:  "named profile",
 			input: "athena://athena.us-east-1.amazonaws.com/mydb?s3_staging_dir=s3://bucket/path&profile=production",
 			assert: func(t *testing.T, q url.Values) {
-				require.Equal(t, "production", q.Get("AWSProfile"))
+				// Profile must NOT be set as AWSProfile in the DSN - that path
+				// in athenadriver only reads ~/.aws/credentials and breaks SSO
+				// profiles. Profile is applied via AWS_PROFILE env var instead.
+				require.Empty(t, q.Get("AWSProfile"))
 				require.Empty(t, q.Get("accessID"))
 			},
 		},

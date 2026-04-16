@@ -44,8 +44,13 @@ var _ interface {
 	schema.TypeParseFormatter
 } = (*Driver)(nil)
 
-// DriverName holds the name used for registration.
+// DriverName holds the name used for atlas URL-scheme registration (athena://).
 const DriverName = "athena"
+
+// sqlDriverName is the database/sql driver name registered by
+// github.com/uber/athenadriver/go (see its constants.go: DriverName = "awsathena").
+// It is distinct from DriverName, which is the Atlas URL scheme users type.
+const sqlDriverName = "awsathena"
 
 func init() {
 	sqlclient.Register(
@@ -66,7 +71,7 @@ func opener(_ context.Context, u *url.URL) (*sqlclient.Client, error) {
 	if err := applyAuthEnv(u); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open(DriverName, dsn)
+	db, err := sql.Open(sqlDriverName, dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -347,9 +352,15 @@ func buildDSN(u *url.URL, database string) (string, error) {
 		vals.Set("sessionToken", t)
 	}
 	// Named profile - Mode 3.
-	if p := firstNonEmpty(q.Get("profile"), q.Get("aws_profile")); p != "" {
-		vals.Set("AWSProfile", p)
-	}
+	// Intentionally NOT setting AWSProfile on the athenadriver DSN: that path
+	// uses credentials.NewSharedCredentials which reads ONLY ~/.aws/credentials
+	// and does not support SSO / sso_session profiles defined in ~/.aws/config.
+	// Instead we expose the profile via the AWS_PROFILE env var + AWS_SDK_LOAD_CONFIG=1
+	// (see applyAuthEnv), which makes athenadriver fall through to
+	// session.NewSession(&aws.Config{}), and aws-sdk-go's default session
+	// honors shared config for SSO, role_arn source_profile, credential_process,
+	// etc. The URL param is still parsed so it can be validated up-front.
+	_ = firstNonEmpty(q.Get("profile"), q.Get("aws_profile"))
 	// Optional workgroup (not an auth mode but useful alongside it).
 	if wg := q.Get("workgroup"); wg != "" {
 		vals.Set("workgroupName", wg)
