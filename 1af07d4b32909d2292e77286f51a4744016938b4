@@ -1,0 +1,30 @@
+sql/athena/driver.go
+  4170c2233f9cd753 47,50-54,74,355-363
+sql/athena/driver_test.go
+  4170c2233f9cd753 80-83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "1af07d4b32909d2292e77286f51a4744016938b4",
+  "prompts": {
+    "4170c2233f9cd753": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "333a1b77-a2b7-497f-9815-ddbe76b0fd0f",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ereli",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 20,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_7508a08151f08f": {
+      "author": "Ereli"
+    }
+  }
+}
