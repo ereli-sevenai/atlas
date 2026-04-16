@@ -1,0 +1,28 @@
+sql/athena/migrate.go
+  4170c2233f9cd753 62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "62fa7f563fd72ee9ed0d9069860f97c03e82ccd2",
+  "prompts": {
+    "4170c2233f9cd753": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "333a1b77-a2b7-497f-9815-ddbe76b0fd0f",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ereli",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_7508a08151f08f": {
+      "author": "Ereli"
+    }
+  }
+}
